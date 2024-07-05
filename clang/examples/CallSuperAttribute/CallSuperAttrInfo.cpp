@@ -31,6 +31,7 @@
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include <iostream>
 using namespace clang;
 
 namespace {
@@ -41,30 +42,24 @@ bool isMarkedAsCallSuper(const CXXMethodDecl *D) {
   return MarkedMethods.contains(D);
 }
 
-class MethodUsageVisitor : public RecursiveASTVisitor<MethodUsageVisitor> {
-public:
-  bool IsOverriddenUsed = false;
-  explicit MethodUsageVisitor(
-      llvm::SmallPtrSet<const CXXMethodDecl *, 16> &MustCalledMethods)
-      : MustCalledMethods(MustCalledMethods) {}
-  bool VisitCallExpr(CallExpr *CallExpr) {
-    const CXXMethodDecl *Callee = nullptr;
-    for (const auto &MustCalled : MustCalledMethods) {
-      if (CallExpr->getCalleeDecl() == MustCalled) {
-        // Super is called.
-        // Notice that we cannot do delete or insert in the iteration
-        // when using SmallPtrSet.
-        Callee = MustCalled;
-      }
-    }
-    if (Callee)
-      MustCalledMethods.erase(Callee);
+    // | |-MemberExpr 0x55d01c263f90 <line:15:26, col:34> 'Lisp_Object':'struct Lisp_X *' lvalue .f_Vafter_init_time 0x55d01c2603c0
+    // | | `-DeclRefExpr 0x55d01c263f70 <col:26> 'struct emacs_globals':'struct emacs_globals' lvalue Var 0x55d01c260520 'globals' 'struct emacs_globals':'struct emacs_globals'
 
+class DynVarVisitor : public RecursiveASTVisitor<DynVarVisitor> {
+public:
+  explicit DynVarVisitor(
+      llvm::SmallPtrSet<const CXXMethodDecl *, 16> &DynVars)
+      : DynVars(DynVars) {}
+  bool VisitMemberExpr(MemberExpr *MemberExpr) {
+    llvm::errs() << "MemberExpr: \"" << MemberExpr << "\"\n";
+    if (DeclRefExpr* declref = dyn_cast<DeclRefExpr>(MemberExpr->getBase())) {
+      // Do stuff with |record|.
+    }
     return true;
   }
 
 private:
-  llvm::SmallPtrSet<const CXXMethodDecl *, 16> &MustCalledMethods;
+  llvm::SmallPtrSet<const CXXMethodDecl *, 16> &DynVars;
 };
 
 class CallSuperVisitor : public RecursiveASTVisitor<CallSuperVisitor> {
@@ -88,7 +83,7 @@ public:
       }
 
       // Now find if the superclass method is called in `MethodDecl`.
-      MethodUsageVisitor Visitor(OverriddenMarkedMethods);
+      DynVarVisitor Visitor(OverriddenMarkedMethods);
       Visitor.TraverseDecl(MethodDecl);
       // After traversing, all methods left in `OverriddenMarkedMethods`
       // are not called, warn about these.
@@ -116,6 +111,8 @@ public:
       lateDiagAppertainsToDecl(Diags, Method);
     }
 
+    llvm::errs() << "Hi from LLVM\n";
+    std::cout << "Hi from C++\n";
     CallSuperVisitor Visitor(Context.getDiagnostics());
     Visitor.TraverseDecl(Context.getTranslationUnitDecl());
   }
@@ -188,5 +185,3 @@ struct CallSuperAttrInfo : public ParsedAttrInfo {
 static FrontendPluginRegistry::Add<CallSuperAction>
     X("call_super_plugin", "clang plugin, checks every overridden virtual "
                            "function whether called this function or not.");
-static ParsedAttrInfoRegistry::Add<CallSuperAttrInfo>
-    Y("call_super_attr", "Attr plugin to define 'call_super' attribute");

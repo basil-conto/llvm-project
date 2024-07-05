@@ -18,7 +18,6 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/Support/raw_ostream.h"
-#include <iostream>
 using namespace clang;
 
 namespace {
@@ -36,29 +35,44 @@ public:
     for (DeclGroupRef::iterator i = DG.begin(), e = DG.end(); i != e; ++i) {
       const Decl *D = *i;
       if (const NamedDecl *ND = dyn_cast<NamedDecl>(D))
-        llvm::errs() << "foo: \"" << ND->getNameAsString() << "\"\n";
+        llvm::errs() << "top-level-decl: \"" << ND->getNameAsString() << "\"\n";
     }
 
     return true;
   }
 
   void HandleTranslationUnit(ASTContext& context) override {
+    if (!Instance.getLangOpts().DelayedTemplateParsing)
+      return;
+
+    // This demonstrates how to force instantiation of some templates in
+    // -fdelayed-template-parsing mode. (Note: Doing this unconditionally for
+    // all templates is similar to not using -fdelayed-template-parsig in the
+    // first place.)
+    // The advantage of doing this in HandleTranslationUnit() is that all
+    // codegen (when using -add-plugin) is completely finished and this can't
+    // affect the compiler output.
     struct Visitor : public RecursiveASTVisitor<Visitor> {
-      bool VisitMemberExpr(MemberExpr *ME) {
-        llvm::errs() << "MemberExpr: \"" << ME << "\"\n";
-        if (DeclRefExpr* declref = dyn_cast<DeclRefExpr>(ME->getBase())) {
-          auto tname = declref->getDecl()->getType().getAsString();
-          llvm::errs() << "DeclRefExpr: \"" << tname << "\"\n";
-          if (tname == "struct emacs_globals") {
-            llvm::errs() << "MemberDecl: \"" << ME->getMemberDecl()->getName() << "\"\n";
-          }
-        }
+      const std::set<std::string> &ParsedTemplates;
+      Visitor(const std::set<std::string> &ParsedTemplates)
+          : ParsedTemplates(ParsedTemplates) {}
+      bool VisitFunctionDecl(FunctionDecl *FD) {
+        if (FD->isLateTemplateParsed() &&
+            ParsedTemplates.count(FD->getNameAsString()))
+          LateParsedDecls.insert(FD);
         return true;
       }
 
       std::set<FunctionDecl*> LateParsedDecls;
-    } v;
+    } v(ParsedTemplates);
     v.TraverseDecl(context.getTranslationUnitDecl());
+    clang::Sema &sema = Instance.getSema();
+    for (const FunctionDecl *FD : v.LateParsedDecls) {
+      clang::LateParsedTemplate &LPT =
+          *sema.LateParsedTemplateMap.find(FD)->second;
+      sema.LateTemplateParser(sema.OpaqueParser, LPT);
+      llvm::errs() << "late-parsed-decl: \"" << FD->getNameAsString() << "\"\n";
+    }
   }
 };
 
@@ -72,7 +86,6 @@ protected:
 
   bool ParseArgs(const CompilerInstance &CI,
                  const std::vector<std::string> &args) override {
-    std::cerr << ">>> Hello" << std::endl;
     for (unsigned i = 0, e = args.size(); i != e; ++i) {
       llvm::errs() << "PrintFunctionNames arg = " << args[i] << "\n";
 
@@ -107,4 +120,4 @@ protected:
 }
 
 static FrontendPluginRegistry::Add<PrintFunctionNamesAction>
-X("print_fns", "print function names");
+X("dynvars", "print function names");

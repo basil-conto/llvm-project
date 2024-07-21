@@ -11,17 +11,31 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/AST/Expr.h"
+#include "clang/AST/Stmt.h"
+#include "clang/Basic/LLVM.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Sema/Sema.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include <iostream>
 using namespace clang;
 
 namespace {
+
+// TODO:
+// - Don't use dyn_cast on AST!
+// - RecordDecl / RecordType / getAsRecordDecl / getAsStructureType
+// - StmtIterator
+// - InstVisitor
+// - def-use chain X->users()
+// - Speed up compilation - debug etc. https://llvm.org/docs/GettingStarted.html
+
+static bool cmp_name(MemberExpr *a, MemberExpr *b) {
+  return a->getMemberDecl()->getName() < b->getMemberDecl()->getName();
+}
 
 class PrintFunctionsConsumer : public ASTConsumer {
   [[maybe_unused]] CompilerInstance &Instance;
@@ -36,32 +50,53 @@ public:
       : Instance(Instance), ParsedTemplates(ParsedTemplates) {}
 
   bool HandleTopLevelDecl(DeclGroupRef DG) override {
-    for (DeclGroupRef::iterator i = DG.begin(), e = DG.end(); i != e; ++i) {
-      const Decl *D = *i;
-      if (const NamedDecl *ND = dyn_cast<NamedDecl>(D))
-        llvm::errs() << "NamedDecl:\t\"" << ND->getNameAsString() << "\"\n";
+    for (const Decl *D : DG) {
+      if (const auto *ND = dyn_cast<NamedDecl>(D))
+        llvm::dbgs() << "NamedDecl:\t\"" << ND->getNameAsString() << "\"\n";
     }
 
     return true;
   }
 
   void HandleTranslationUnit(ASTContext& context) override {
-    struct Visitor : public RecursiveASTVisitor<Visitor> {
+
+
+    struct VVisitor : public RecursiveASTVisitor<VVisitor> {
+
       bool VisitMemberExpr(MemberExpr *ME) {
-        llvm::errs() << "MemberExpr:\t\"" << ME << "\"\n";
-        if (DeclRefExpr* declref = dyn_cast<DeclRefExpr>(ME->getBase())) {
+        // llvm::dbgs() << "MemberExpr:\t\"" << ME << "\"\n";
+        if (const auto *declref = dyn_cast<DeclRefExpr>(ME->getBase())) {
           auto tname = declref->getDecl()->getType().getAsString();
-          llvm::errs() << ".DeclRefExpr:\t\"" << tname << "\"\n";
+          // llvm::dbgs() << ".DeclRefExpr:\t\"" << tname << "\"\n";
           if (tname == "struct emacs_globals") {
-            llvm::errs() << ".MemberDecl:\t\"" << ME->getMemberDecl()->getName() << "\"\n";
+            // llvm::dbgs() << ".MemberDecl:\t\"" << ME->getMemberDecl()->getName() << "\"\n";
+            EmacsGlobals.insert(ME);
           }
         }
         return true;
       }
 
-      std::set<FunctionDecl*> LateParsedDecls;
-    } v;
-    v.TraverseDecl(context.getTranslationUnitDecl());
+      std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
+    };
+
+    struct FVisitor : public RecursiveASTVisitor<FVisitor> {
+
+      bool VisitFunctionDecl(FunctionDecl *FD) {
+        llvm::dbgs() << FD->getNameAsString() << "\n";
+        VVisitor v;
+        v.TraverseDecl(FD);
+        auto *stmt = FD->getBody();
+        if (const auto *compound = dyn_cast_or_null<CompoundStmt>(stmt)) {
+          compound->
+          llvm::dbgs() << '\t' << "ok" << '\n';
+        }
+        return true;
+      }
+
+    } fv;
+
+    fv.TraverseDecl(context.getTranslationUnitDecl());
+    // v.TraverseDecl(context.getTranslationUnitDecl());
   }
 };
 

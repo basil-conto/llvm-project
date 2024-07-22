@@ -60,7 +60,6 @@ public:
 
   void HandleTranslationUnit(ASTContext& context) override {
 
-
     struct VVisitor : public RecursiveASTVisitor<VVisitor> {
 
       bool VisitMemberExpr(MemberExpr *ME) {
@@ -85,10 +84,16 @@ public:
         llvm::dbgs() << FD->getNameAsString() << "\n";
         VVisitor v;
         v.TraverseDecl(FD);
-        auto *stmt = FD->getBody();
-        if (const auto *compound = dyn_cast_or_null<CompoundStmt>(stmt)) {
-          compound->
-          llvm::dbgs() << '\t' << "ok" << '\n';
+        auto *body = FD->getBody();
+        if (const auto *compound = dyn_cast_or_null<CompoundStmt>(body)) {
+          // compound->
+          llvm::dbgs().indent(2) << "CompoundStmt members:" << '\n';
+          for (const auto *ME : v.EmacsGlobals) {
+            llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
+          }
+          // CompoundStmt::Create
+        } else if (compound) {
+          llvm::errs().indent(2) << "Not a CompoundStmt: " << body->getStmtClassName() << '\n';
         }
         return true;
       }
@@ -143,6 +148,8 @@ protected:
 };
 
 } // namespace
+
+// implement getActionType()?
 
 static FrontendPluginRegistry::Add<PrintFunctionNamesAction>
 X("print_fns", "print function names");

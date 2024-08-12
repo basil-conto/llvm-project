@@ -80,6 +80,8 @@ public:
     };
 
     struct FVisitor : public RecursiveASTVisitor<FVisitor> {
+      ASTContext &context;
+      FVisitor(ASTContext& context) : context(context) {}
 
       bool VisitFunctionDecl(FunctionDecl *FD) {
         llvm::dbgs() << FD->getNameAsString() << "\n";
@@ -107,7 +109,7 @@ public:
         return true;
       }
 
-    } fv;
+    } fv(context);
 
     fv.TraverseDecl(context.getTranslationUnitDecl());
     // v.TraverseDecl(context.getTranslationUnitDecl());

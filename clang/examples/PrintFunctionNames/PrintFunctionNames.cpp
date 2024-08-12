@@ -103,6 +103,33 @@ public:
             llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
           }
           llvm::dbgs() << '\n';
+
+// CallExpr 0x55893763a168 <line:62:3, col:26> 'int'
+// |-ImplicitCastExpr 0x55893763a150 <col:3> 'int (*)(const char *)' <FunctionToPointerDecay>
+// | `-DeclRefExpr 0x55893763a0d8 <col:3> 'int (const char *)' Function 0x5589375e2b38 'puts' 'int (const char *)'
+// `-ImplicitCastExpr 0x55893763a1a8 <col:8> 'const char *' <NoOp>
+//   `-ImplicitCastExpr 0x55893763a190 <col:8> 'char *' <ArrayToPointerDecay>
+//     `-StringLiteral 0x55893763a0f8 <col:8> 'char[17]' lvalue "Vafter_init_time"
+
+
+          auto *newcompound = CompoundStmt::Create(context,
+                                                   body,
+                                                   compound->getStoredFPFeaturesOrDefault(),
+                                                   compound->getLBracLoc(),
+                                                   compound->getRBracLoc());
+
+          // BuiltinType
+
+          // auto *callexpr = CallExpr::Create(context,
+          //                                   Expr *Fn,
+          //                                   ArrayRef<Expr *> Args,
+          //                                   QualType(),
+          //                                   ExprValueKind::VK_PRValue,
+          //                                   compound->getBeginLoc(),
+          //                                   compound->getStoredFPFeaturesOrDefault());
+
+          FD->setBody(newcompound);
+
         } else if (compound) {
           llvm::errs().indent(2) << "Not a CompoundStmt: " << body->getStmtClassName() << '\n';
         }

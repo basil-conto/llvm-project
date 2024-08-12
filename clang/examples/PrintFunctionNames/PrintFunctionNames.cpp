@@ -85,14 +85,22 @@ public:
         llvm::dbgs() << FD->getNameAsString() << "\n";
         VVisitor v;
         v.TraverseDecl(FD);
+
+        llvm::dbgs() << '\n';
+        llvm::dbgs().indent(2) << "hasBody: " << FD->hasBody() << '\n';
+        llvm::dbgs().indent(2) << "hasTrivialBody: " << FD->hasTrivialBody() << '\n';
+        llvm::dbgs().indent(2) << "isDefined: " << FD->isDefined() << '\n';
+        llvm::dbgs().indent(2) << "isThisDeclarationADefinition: " << FD->isThisDeclarationADefinition() << '\n';
+        llvm::dbgs().indent(2) << "doesThisDeclarationHaveABody: " << FD->doesThisDeclarationHaveABody() << '\n';
+        llvm::dbgs() << '\n';
+
         auto *body = FD->getBody();
         if (const auto *compound = dyn_cast_or_null<CompoundStmt>(body)) {
-          // compound->
           llvm::dbgs().indent(2) << "CompoundStmt members:" << '\n';
           for (const auto *ME : v.EmacsGlobals) {
             llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
           }
-          // CompoundStmt::Create
+          llvm::dbgs() << '\n';
         } else if (compound) {
           llvm::errs().indent(2) << "Not a CompoundStmt: " << body->getStmtClassName() << '\n';
         }

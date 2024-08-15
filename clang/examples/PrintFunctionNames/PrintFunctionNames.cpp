@@ -32,7 +32,6 @@ namespace {
 // - StmtIterator
 // - InstVisitor
 // - def-use chain X->users()
-// - Speed up compilation - debug etc. https://llvm.org/docs/GettingStarted.html
 
 static bool cmp_name(MemberExpr *a, MemberExpr *b) {
   return a->getMemberDecl()->getName() < b->getMemberDecl()->getName();
@@ -41,9 +40,6 @@ static bool cmp_name(MemberExpr *a, MemberExpr *b) {
 class PrintFunctionsConsumer : public ASTConsumer {
   [[maybe_unused]] CompilerInstance &Instance;
   std::set<std::string> ParsedTemplates;
-
-// MemberExpr 0xabc <line:1:2,col:3> 'Lisp_Object':'struct Lisp_X *' lvalue .f_Vafter_init_time 0xabc
-// `-DeclRefExpr 0xabc <col:26> 'struct emacs_globals':'struct emacs_globals' lvalue Var 0xabc 'globals' 'struct emacs_globals':'struct emacs_globals'
 
 public:
   PrintFunctionsConsumer(CompilerInstance &Instance,
@@ -104,14 +100,6 @@ public:
           }
           llvm::dbgs() << '\n';
 
-// CallExpr 0x55893763a168 <line:62:3, col:26> 'int'
-// |-ImplicitCastExpr 0x55893763a150 <col:3> 'int (*)(const char *)' <FunctionToPointerDecay>
-// | `-DeclRefExpr 0x55893763a0d8 <col:3> 'int (const char *)' Function 0x5589375e2b38 'puts' 'int (const char *)'
-// `-ImplicitCastExpr 0x55893763a1a8 <col:8> 'const char *' <NoOp>
-//   `-ImplicitCastExpr 0x55893763a190 <col:8> 'char *' <ArrayToPointerDecay>
-//     `-StringLiteral 0x55893763a0f8 <col:8> 'char[17]' lvalue "Vafter_init_time"
-
-
           auto *newcompound = CompoundStmt::Create(context,
                                                    body,
                                                    compound->getStoredFPFeaturesOrDefault(),
@@ -119,7 +107,6 @@ public:
                                                    compound->getRBracLoc());
 
           // BuiltinType
-
           // auto *callexpr = CallExpr::Create(context,
           //                                   Expr *Fn,
           //                                   ArrayRef<Expr *> Args,

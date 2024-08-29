@@ -38,13 +38,14 @@ static bool cmp_name(MemberExpr *a, MemberExpr *b) {
 }
 
 class PrintFunctionsConsumer : public ASTConsumer {
-  [[maybe_unused]] CompilerInstance &Instance;
-  std::set<std::string> ParsedTemplates;
+  CompilerInstance &Instance;
+  std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
 
 public:
-  PrintFunctionsConsumer(CompilerInstance &Instance,
-                         std::set<std::string> ParsedTemplates)
-      : Instance(Instance), ParsedTemplates(ParsedTemplates) {}
+  PrintFunctionsConsumer(CompilerInstance &Instance)
+      : Instance(Instance) {
+    Instance.getCodeGenOpts().PassBuilderCallbacks.push_back(PrintCallback);
+  }
 
   bool HandleTopLevelDecl(DeclGroupRef DG) override {
     for (const Decl *D : DG) {
@@ -72,7 +73,6 @@ public:
         return true;
       }
 
-      std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
     };
 
     struct FVisitor : public RecursiveASTVisitor<FVisitor> {
@@ -131,11 +131,10 @@ public:
 };
 
 class PrintFunctionNamesAction : public PluginASTAction {
-  std::set<std::string> ParsedTemplates;
 protected:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  llvm::StringRef) override {
-    return std::make_unique<PrintFunctionsConsumer>(CI, ParsedTemplates);
+    return std::make_unique<PrintFunctionsConsumer>(CI);
   }
 
   bool ParseArgs(const CompilerInstance &CI,

@@ -20,6 +20,13 @@
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "llvm/IR/Analysis.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Passes/OptimizationLevel.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace clang;
@@ -37,13 +44,42 @@ static bool cmp_name(MemberExpr *a, MemberExpr *b) {
   return a->getMemberDecl()->getName() < b->getMemberDecl()->getName();
 }
 
-class PrintFunctionsConsumer : public ASTConsumer {
-  CompilerInstance &Instance;
-  std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
+std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
+
+class PrintPass final : public llvm::AnalysisInfoMixin<PrintPass> {
+  friend struct llvm::AnalysisInfoMixin<PrintPass>;
 
 public:
-  PrintFunctionsConsumer(CompilerInstance &Instance)
-      : Instance(Instance) {
+  using Result = llvm::PreservedAnalyses;
+
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    for (const auto &F : M) {
+      if (F.isDeclaration())
+        continue;
+      llvm::dbgs() << "-> Function: " << F.getName() << '\n';
+    }
+    for (const auto *ME : EmacsGlobals) {
+      llvm::dbgs() << "-> Variable: " << ME->getMemberDecl()->getName() << '\n';
+    }
+    llvm::dbgs() << "<- Done\n";
+    return llvm::PreservedAnalyses::all();
+  }
+
+  // Run pass even with optimizations disabled.
+  static bool isRequired() { return true; }
+};
+
+void PrintCallback(llvm::PassBuilder &PB) {
+  PB.registerPipelineStartEPCallback(
+    [](llvm::ModulePassManager &MPM, llvm::OptimizationLevel) {
+      MPM.addPass(PrintPass());
+    });
+}
+
+class PrintFunctionsConsumer : public ASTConsumer {
+
+public:
+  PrintFunctionsConsumer(CompilerInstance &Instance) {
     Instance.getCodeGenOpts().PassBuilderCallbacks.push_back(PrintCallback);
   }
 
@@ -95,7 +131,7 @@ public:
         auto *body = FD->getBody();
         if (const auto *compound = dyn_cast_or_null<CompoundStmt>(body)) {
           llvm::dbgs().indent(2) << "CompoundStmt members:" << '\n';
-          for (const auto *ME : v.EmacsGlobals) {
+          for (const auto *ME : EmacsGlobals) {
             llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
           }
           llvm::dbgs() << '\n';
@@ -139,9 +175,6 @@ protected:
 
   bool ParseArgs(const CompilerInstance &CI,
                  const std::vector<std::string> &args) override {
-    for (const auto &arg : args) {
-      llvm::dbgs() << "PrintFunctionNames arg = " << arg << "\n";
-    }
     return true;
   }
 

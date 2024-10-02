@@ -20,6 +20,7 @@
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Analysis.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -45,6 +46,7 @@ static bool cmp_name(MemberExpr *a, MemberExpr *b) {
 }
 
 std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
+std::map<llvm::StringRef,std::set<MemberExpr*, decltype(cmp_name)*>> EmacsMap;
 
 class PrintPass final : public llvm::AnalysisInfoMixin<PrintPass> {
   friend struct llvm::AnalysisInfoMixin<PrintPass>;
@@ -53,6 +55,7 @@ public:
   using Result = llvm::PreservedAnalyses;
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    llvm::dbgs() << "<- LLVM found:\n";
     for (const auto &F : M) {
       if (F.isDeclaration())
         continue;
@@ -62,6 +65,15 @@ public:
       llvm::dbgs() << "-> Variable: " << ME->getMemberDecl()->getName() << '\n';
     }
     llvm::dbgs() << "<- Done\n";
+
+    // llvm::dbgs() << "<- Final mapping:\n";
+    // for (const auto& [fn, vars] : EmacsMap) {
+    //   llvm::dbgs() << "  " << fn << '\n';
+    //   for (const auto& v : vars) {
+    //     llvm::dbgs() << "    " << v->getMemberDecl()->getNameAsString() << '\n';
+    //   }
+    // }
+
     return llvm::PreservedAnalyses::all();
   }
 
@@ -95,15 +107,16 @@ public:
   void HandleTranslationUnit(ASTContext& context) override {
 
     struct VVisitor : public RecursiveASTVisitor<VVisitor> {
+      std::set<MemberExpr*, decltype(cmp_name)*> vars;
+      VVisitor(std::set<MemberExpr*, decltype(cmp_name)*> vars) : vars(vars) {}
 
       bool VisitMemberExpr(MemberExpr *ME) {
-        // llvm::dbgs() << "MemberExpr:\t\"" << ME << "\"\n";
         if (const auto *declref = dyn_cast<DeclRefExpr>(ME->getBase())) {
           auto tname = declref->getDecl()->getType().getAsString();
-          // llvm::dbgs() << ".DeclRefExpr:\t\"" << tname << "\"\n";
           if (tname == "struct emacs_globals") {
             // llvm::dbgs() << ".MemberDecl:\t\"" << ME->getMemberDecl()->getName() << "\"\n";
             EmacsGlobals.insert(ME);
+            vars.insert(ME);
           }
         }
         return true;
@@ -116,53 +129,24 @@ public:
       FVisitor(ASTContext& context) : context(context) {}
 
       bool VisitFunctionDecl(FunctionDecl *FD) {
-        llvm::dbgs() << FD->getNameAsString() << "\n";
-        VVisitor v;
+        llvm::dbgs() << "Visiting: " << FD->getNameAsString() << "\n";
+
+        std::set<MemberExpr*, decltype(cmp_name)*> vars{cmp_name};
+        VVisitor v{vars};
         v.TraverseDecl(FD);
+        EmacsMap[FD->getNameAsString()] = vars;
 
-        llvm::dbgs() << '\n';
-        llvm::dbgs().indent(2) << "hasBody: " << FD->hasBody() << '\n';
-        llvm::dbgs().indent(2) << "hasTrivialBody: " << FD->hasTrivialBody() << '\n';
-        llvm::dbgs().indent(2) << "isDefined: " << FD->isDefined() << '\n';
-        llvm::dbgs().indent(2) << "isThisDeclarationADefinition: " << FD->isThisDeclarationADefinition() << '\n';
-        llvm::dbgs().indent(2) << "doesThisDeclarationHaveABody: " << FD->doesThisDeclarationHaveABody() << '\n';
-        llvm::dbgs() << '\n';
-
-        auto *body = FD->getBody();
-        if (const auto *compound = dyn_cast_or_null<CompoundStmt>(body)) {
-          llvm::dbgs().indent(2) << "CompoundStmt members:" << '\n';
-          for (const auto *ME : EmacsGlobals) {
-            llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
-          }
-          llvm::dbgs() << '\n';
-
-          auto *newcompound = CompoundStmt::Create(context,
-                                                   body,
-                                                   compound->getStoredFPFeaturesOrDefault(),
-                                                   compound->getLBracLoc(),
-                                                   compound->getRBracLoc());
-
-          // BuiltinType
-          // auto *callexpr = CallExpr::Create(context,
-          //                                   Expr *Fn,
-          //                                   ArrayRef<Expr *> Args,
-          //                                   QualType(),
-          //                                   ExprValueKind::VK_PRValue,
-          //                                   compound->getBeginLoc(),
-          //                                   compound->getStoredFPFeaturesOrDefault());
-
-          FD->setBody(newcompound);
-
-        } else if (compound) {
-          llvm::errs().indent(2) << "Not a CompoundStmt: " << body->getStmtClassName() << '\n';
+        for (const auto *ME : EmacsGlobals) {
+          llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
         }
+        llvm::dbgs() << '\n';
+
         return true;
       }
 
     } fv(context);
 
     fv.TraverseDecl(context.getTranslationUnitDecl());
-    // v.TraverseDecl(context.getTranslationUnitDecl());
   }
 };
 

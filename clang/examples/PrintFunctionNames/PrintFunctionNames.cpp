@@ -55,16 +55,65 @@ public:
   using Result = llvm::PreservedAnalyses;
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-    llvm::dbgs() << "<- LLVM found:\n";
-    for (const auto &F : M) {
+    // Whether we inserted something.
+    bool changed = false;
+
+    auto &CTX = M.getContext();
+    llvm::PointerType *PrintfArgTy = llvm::PointerType::getUnqual(
+      llvm::Type::getInt8Ty(CTX));
+
+    // Inject printf declaration.
+    llvm::FunctionType *PrintfTy = llvm::FunctionType::get(
+      llvm::IntegerType::getInt32Ty(CTX),
+      PrintfArgTy,
+      true);
+    llvm::FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
+
+    // Set printf attributes.
+    llvm::Function *PrintfF = dyn_cast<llvm::Function>(Printf.getCallee());
+    PrintfF->setDoesNotThrow();
+    PrintfF->addParamAttr(0, llvm::Attribute::NoCapture);
+    PrintfF->addParamAttr(0, llvm::Attribute::ReadOnly);
+
+    // Inject printf format string as global variable.
+    llvm::Constant *PrintfFormatStr = llvm::ConstantDataArray::getString(
+      CTX, "(llvm-plugin run) %s has variable %s\n");
+
+    llvm::Constant *PrintfFormatStrVar =
+      M.getOrInsertGlobal("PrintfFormatStr", PrintfFormatStr->getType());
+    dyn_cast<llvm::GlobalVariable>(PrintfFormatStrVar)->setInitializer(PrintfFormatStr);
+
+    // Inject printf into each function.
+    for (auto &F : M) {
       if (F.isDeclaration())
         continue;
-      llvm::dbgs() << "   -> Function: " << F.getName() << '\n';
+
+      auto& vars = EmacsMap[F.getName().str()];
+
+      if (vars.empty())
+        continue;
+
+      llvm::dbgs() << "(llvm-plugin compile) Instrumenting: " << F.getName() << "\n";
+
+      // Make IR builder inserting at start of function.
+      llvm::IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+
+      // Inject function name as global variable.
+      auto *FuncName = Builder.CreateGlobalStringPtr(F.getName());
+
+      // Cast array to pointer.
+      llvm::Value *FormatStrPtr =
+        Builder.CreatePointerCast(PrintfFormatStrVar, PrintfArgTy, "formatStr");
+
+      for (auto& v : vars) {
+        auto *VarName = Builder.CreateGlobalStringPtr(v);
+
+        // Inject printf call.
+        Builder.CreateCall(Printf, {FormatStrPtr, FuncName, VarName});
+      }
+
+      changed = true;
     }
-    for (const auto *ME : EmacsGlobals) {
-      llvm::dbgs() << "   -> Variable: " << ME->getMemberDecl()->getName() << '\n';
-    }
-    llvm::dbgs() << "<- Done\n";
 
     llvm::dbgs() << "<- Final mapping:\n";
     for (const auto& [fn, vars] : EmacsMap) {
@@ -76,7 +125,9 @@ public:
     }
     llvm::dbgs() << "<- Done\n";
 
-    return llvm::PreservedAnalyses::all();
+    return changed
+      ? llvm::PreservedAnalyses::none()
+      : llvm::PreservedAnalyses::all();
   }
 
   // Run pass even with optimizations disabled.

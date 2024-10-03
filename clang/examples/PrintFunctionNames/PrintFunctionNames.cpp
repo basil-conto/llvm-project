@@ -46,7 +46,7 @@ static bool cmp_name(MemberExpr *a, MemberExpr *b) {
 }
 
 std::set<MemberExpr*, decltype(cmp_name)*> EmacsGlobals{cmp_name};
-std::map<llvm::StringRef,std::set<MemberExpr*, decltype(cmp_name)*>> EmacsMap;
+std::map<std::string, std::set<std::string>> EmacsMap;
 
 class PrintPass final : public llvm::AnalysisInfoMixin<PrintPass> {
   friend struct llvm::AnalysisInfoMixin<PrintPass>;
@@ -59,20 +59,22 @@ public:
     for (const auto &F : M) {
       if (F.isDeclaration())
         continue;
-      llvm::dbgs() << "-> Function: " << F.getName() << '\n';
+      llvm::dbgs() << "   -> Function: " << F.getName() << '\n';
     }
     for (const auto *ME : EmacsGlobals) {
-      llvm::dbgs() << "-> Variable: " << ME->getMemberDecl()->getName() << '\n';
+      llvm::dbgs() << "   -> Variable: " << ME->getMemberDecl()->getName() << '\n';
     }
     llvm::dbgs() << "<- Done\n";
 
-    // llvm::dbgs() << "<- Final mapping:\n";
-    // for (const auto& [fn, vars] : EmacsMap) {
-    //   llvm::dbgs() << "  " << fn << '\n';
-    //   for (const auto& v : vars) {
-    //     llvm::dbgs() << "    " << v->getMemberDecl()->getNameAsString() << '\n';
-    //   }
-    // }
+    llvm::dbgs() << "<- Final mapping:\n";
+    for (const auto& [fn, vars] : EmacsMap) {
+      if (vars.empty()) continue;
+      llvm::dbgs() << "   " << fn << '\n';
+      for (const auto& v : vars) {
+        llvm::dbgs() << "     " << v << '\n';
+      }
+    }
+    llvm::dbgs() << "<- Done\n";
 
     return llvm::PreservedAnalyses::all();
   }
@@ -107,8 +109,8 @@ public:
   void HandleTranslationUnit(ASTContext& context) override {
 
     struct VVisitor : public RecursiveASTVisitor<VVisitor> {
-      std::set<MemberExpr*, decltype(cmp_name)*> vars;
-      VVisitor(std::set<MemberExpr*, decltype(cmp_name)*> vars) : vars(vars) {}
+      std::set<std::string>& vars;
+      VVisitor(std::set<std::string>& vars) : vars(vars) {}
 
       bool VisitMemberExpr(MemberExpr *ME) {
         if (const auto *declref = dyn_cast<DeclRefExpr>(ME->getBase())) {
@@ -116,7 +118,7 @@ public:
           if (tname == "struct emacs_globals") {
             // llvm::dbgs() << ".MemberDecl:\t\"" << ME->getMemberDecl()->getName() << "\"\n";
             EmacsGlobals.insert(ME);
-            vars.insert(ME);
+            vars.insert(std::string(ME->getMemberDecl()->getName()));
           }
         }
         return true;
@@ -129,17 +131,16 @@ public:
       FVisitor(ASTContext& context) : context(context) {}
 
       bool VisitFunctionDecl(FunctionDecl *FD) {
-        llvm::dbgs() << "Visiting: " << FD->getNameAsString() << "\n";
+        llvm::dbgs() << "Visiting: " << FD->getName() << "\n";
 
-        std::set<MemberExpr*, decltype(cmp_name)*> vars{cmp_name};
+        std::set<std::string> vars;
         VVisitor v{vars};
         v.TraverseDecl(FD);
-        EmacsMap[FD->getNameAsString()] = vars;
+        EmacsMap[std::string(FD->getName())] = vars;
 
-        for (const auto *ME : EmacsGlobals) {
-          llvm::dbgs().indent(4) << ME->getMemberDecl()->getName() << '\n';
+        for (const auto& v : vars)  {
+          llvm::dbgs().indent(4) << v << '\n';
         }
-        llvm::dbgs() << '\n';
 
         return true;
       }

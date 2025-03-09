@@ -62,6 +62,10 @@ public:
     llvm::PointerType *PrintfArgTy = llvm::PointerType::getUnqual(
       llvm::Type::getInt8Ty(CTX));
 
+    llvm::dbgs() << "(llvm-plugin compile) printf exists: "
+                 << (M.getFunction("printf") ? "yes" : "no")
+                 << '\n';
+
     // Inject printf declaration.
     llvm::FunctionType *PrintfTy = llvm::FunctionType::get(
       llvm::IntegerType::getInt32Ty(CTX),
